@@ -1,0 +1,944 @@
+---
+title: "AI Tech Bubble"
+author: "Kovacheva, Vedenikova"
+date: "2024-05-21"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r setup, include=FALSE}
+
+library (tidyverse)
+library (zoo)
+library(tseries)
+library(plotly)
+library(astsa)
+library(forecast)
+library(vars)
+library(quantmod)
+library(stats) #might not be needed
+library(dplyr)
+library(plyr)
+library(tibble)
+library(quantmod)
+library(anytime)
+```
+
+Note: This Markdown is not our final official report but the code and modelling behind our report (submitted as pdf) as part of the final assessment for this course.
+
+# Descriptive Analysis
+
+## Load datasets
+
+```{r loadingds, echo=FALSE, warning=FALSE}
+
+# set correct working directory
+setwd('./Kovacheva_Vedenikova/data')
+
+# Load the NVDA and NDX prices 
+NVDA_a <- read.csv("NVDA.csv", header = TRUE,
+                 colClasses = 
+                   c(Date = "Date", 
+                     Open = "double", 
+                     High = "double", 
+                     Low = "double", 
+                     Close = "double", 
+                     Adj.Close = "double", 
+                     Volume = "numeric"))
+
+CSCO_a <- read.csv("CSCO.csv", header = TRUE,
+                 colClasses = 
+                   c(Date = "Date", 
+                     Open = "double", 
+                     High = "double", 
+                     Low = "double", 
+                     Close = "double", 
+                     Adj.Close = "double", 
+                     Volume = "numeric"))
+
+SPX_a <- read.csv("^SPX.csv", header = TRUE,
+                 colClasses = 
+                   c(Date = "Date", 
+                     Open = "double", 
+                     High = "double", 
+                     Low = "double", 
+                     Close = "double", 
+                     Adj.Close = "double", 
+                     Volume = "numeric"))
+
+```
+
+
+```{r descriptive_analysis, warning=FALSE}
+
+# change the date format
+
+NVDA_a$Date <- as.Date(NVDA_a$Date, format =  "%d.%m.%Y")
+CSCO_a$Date <- as.Date(CSCO_a$Date, format =  "%d.%m.%Y")
+SPX_a$Date <- as.Date(SPX_a$Date, format =  "%d.%m.%Y")
+
+# Create OHLC plot to visualize open and close rates.
+fig1 <- plot_ly(NVDA_a, type = "ohlc", x = ~Date, open = ~Open, high = ~High, low = ~Low, close = ~Close)
+fig2 <- plot_ly(CSCO_a, type = "ohlc", x = ~Date, open = ~Open, high = ~High, low = ~Low, close = ~Close)
+fig3 <- plot_ly(SPX_a, type = "ohlc", x = ~Date, open = ~Open, high = ~High, low = ~Low, close = ~Close)
+
+# Update layout
+
+fig1 <- fig1 %>%
+  layout(
+    template = "plotly_dark",
+    title = "NVDA Price from 02.01.2019 to 29.04.2024",
+    xaxis = list(title = "Date"),
+    yaxis = list(title = "Price"),
+    title_x = 0.5
+  ) %>%
+  layout(yaxis = list(showgrid = TRUE)) %>%
+  layout(xaxis = list(showgrid = TRUE))
+
+fig2 <- fig2 %>%
+  layout(
+    template = "plotly_dark",
+    title = "CISCO price from 10.03.2000 to 04.10.2002",
+    xaxis = list(title = "Date"),
+    yaxis = list(title = "Price"),
+    title_x = 0.5
+  ) %>%
+  layout(yaxis = list(showgrid = TRUE)) %>%
+  layout(xaxis = list(showgrid = TRUE))
+
+fig3 <- fig3 %>%
+  layout(
+    template = "plotly_dark",
+    title = "S&P 500 from 02.01.2019 to 29.04.24",
+    xaxis = list(title = "Date"),
+    yaxis = list(title = "Price"),
+    title_x = 0.5
+  ) %>%
+  layout(yaxis = list(showgrid = TRUE)) %>%
+  layout(xaxis = list(showgrid = TRUE))
+
+# Print the plots of the imported data 
+fig1
+fig2
+fig3
+
+#We definitely notice trends in the plots which justifies differencing 
+```
+
+```{r}
+
+NVDA <-  ts(NVDA_a[,c(-1,-2,-3,-4,-5,-7)], start = as.yearmon(NVDA_a$Date[1]), frequency = 365)
+CSCO <- ts(CSCO_a[,c(-1,-2,-3,-4,-5,-7)], start = as.yearmon(NVDA_a$Date[1]), frequency = 365)
+SPX<- ts(SPX_a[,c(-1,-2,-3,-4,-5,-7)], start = as.yearmon(SPX_a$Date[1]), frequency = 365)
+
+
+summary(NVDA)
+summary(SPX)
+
+# plot differenced time series 
+NVDA_diff <- diff(NVDA)
+SPX_diff <- diff(SPX)
+
+# NVDA & SPX
+plot(NVDA_diff)
+plot(SPX_diff)
+
+```
+
+
+For the further analysis we consider only the Closing Daily Prices.
+
+Since we suspect heteroskedasticity in the Nvidia time series, we take the initial time series still with trend and seasonality to test if a Box-Cox transformation is needed. Otherwise, we apply Log transformations in further steps.
+```{r box_cox}
+
+BoxCox.lambda(NVDA) # result -0.3849
+# The lambda value is -0.38 which we consider to be very close to 0
+# therefore, we will not consider power transformations (box-cox transformations) but log transformation instead, since we think will be sufficient to take care of heteroskedasticity in the error terms
+
+
+```
+
+
+```{r, continue}
+# now we try to differenciate the log transformed NVDA prices
+NVDA_adj<- na.omit(diff(log(NVDA)))
+plot(decompose(NVDA_diff)) #still a trend in the data so a further differentiation is justified
+NVDA_adj<- na.omit(diff(diff(log(NVDA))))
+plot(decompose(NVDA_adj)) #this shows that there is no trend or seasonality in the time series anymore
+# conclude: we differenciate twice (lag 2)
+
+
+SPX_adj<- na.omit(diff((log(SPX))))
+plot(decompose(SPX_diff)) #still a trend in the data, so a further differentiation is justified
+SPX_adj<- na.omit(diff(diff((log(SPX)))))
+plot(decompose(SPX_adj))#this shows that there is no trend or seasonality in the time series anymore
+# conclude: we differenciate twice (lag 2)
+
+# we had a problem with accurately plotting ts data, with correct dates in the x axis so had to improve a bit to achive that
+# if there is an other direct method to plot daily stock pices data (in ts form) with skipping weekends and not working days
+# we would be delighted to know how
+
+# Initialize the new data frame
+NVDA_adj_df <- data.frame(Date = NVDA_a$Date)
+# Create a Diff column filled with NA initially
+NVDA_adj_df$Diff <- NA
+# If NVDA_adj is shorter than NVDA_a$Date - 1 (to account for the first NA),
+# fill remaining values with NA
+if (length(NVDA_adj) < length(NVDA_a$Date) - 1) {
+  NVDA_adj_temp <- c(NVDA_adj, rep(NA, length(NVDA_a$Date) - 1 - length(NVDA_adj)))
+}
+# Add the NVDA_adj values to the Diff column starting from the second row
+NVDA_adj_df$Diff[2:length(NVDA_a$Date)] <- NVDA_adj_temp
+
+# Initialize the new data frame
+SPX_adj_df <- data.frame(Date = SPX_a$Date)
+# Create a Diff column filled with NA initially
+SPX_adj_df$Diff <- NA
+# If NVDA_adj is shorter than NVDA_a$Date - 1 (to account for the first NA),
+# fill remaining values with NA
+if (length(SPX_adj) < length(SPX_a$Date) - 1) {
+  SPX_adj_temp <- c(SPX_adj, rep(NA, length(SPX_a$Date) - 1 - length(SPX_adj)))
+}
+# Add the NVDA_adj values to the Diff column starting from the second row
+SPX_adj_df$Diff[2:length(SPX_a$Date)] <- SPX_adj_temp
+
+# plot hte differenciated time series
+plot(NVDA_adj_df$Date, NVDA_adj_df$Diff, type="l")
+# plot hte differenciated time series
+plot(SPX_adj_df$Date, SPX_adj_df$Diff, type="l")
+
+
+```
+We now check if we achieved removing both trends and seasonality with an Augmented Dickey-Fuller Test (ADF).
+
+```{r adf}
+adf.test(NVDA_adj)
+adf.test(SPX_adj)
+```
+
+Since the p-values are in both cases below 0.05, we say that we have strong evidence against the null hypothesis and that the time series are stationary. The test statistic is a negative number that is in the double digits, so the evidence against the null hypothesis is strong. From this point on, we can consider the start of our Stock Volatility Analysis, Ar-, Ma- or Arima and GARCH modelling.
+
+## VAR model 
+
+We build a VAR model where endogenous values are determined by their own lagged values as well as the lags of other endogenous variables. Our endogenous variables are the stock price of Nvidia and the S&P500 Index. We previously made sure to transform them into stationary time series.  
+
+The below model's summary suggests that all the variables modelling the growth in valuation of the S&P500 index are significant. Nvidia stock appears to be positively correlated to the S&P500 index due to its positive coefficient estimate for p-value < 0.05. 
+This being said, a strong component of the S&P500 index value is the (lagged) S&P500 itself, so Nvidia stock might not have a strong influence on the S&P500 index if we fail to find causality with the Granger Causality test. 
+
+```{r var_models}
+library(vars)
+VAR_est <- VAR(cbind(SPX_adj, NVDA_adj), type="const", ic="AIC")
+summary(VAR_est)
+coeftest(VAR_est)
+```
+
+Based on the VAR estimation results, both lagged values of the S&P 500 index and NVDA stock are significant predictors of their current values respectively. The negative coefficient for the lagged SPX index suggests a negative relationship with its current value, while the positive coefficient for the lagged NVDA price suggests a positive relationship. The positive covariance (0.0004336) and high correlation (0.699) between the residuals of suggest that the residuals of NVIDIA and SPX tend to move together in the same direction. In other words, when the residual of one variable is higher (or lower) than expected, the residual of the other variable tends to exhibit a similar pattern. Which implies the that bothvariables respond similarty to external shocks.
+
+However, we need further analysis to check if there are causal relationships in the variables of our VAR using the Granger causality test: 
+```{r granger}
+causality(VAR_est, cause="NVDA_adj")
+```
+
+Indeed, it appears that Nvidia stock price is a causal driver for the S&P 500 index. This is unsurprising, as especially this year, Nvidia has contributed the most to S&P500 gains with a 3.9% contribution, that is 4 to 8 times more than the other top contributors as per Yahoo Finance [ref^4]. In 2023, Nvidia was also one of 7 stocks driving the growth in the S&P 500[ref^5] after what some describe as a bear market in 2022. 
+
+
+## Nvidia Stock - What if it followed the same pattern as CISCO did from March 2000 to October 2002? 
+
+As we saw above, Nvidia and the S&P 500 are correlated and there is a causal relationship between them.
+Over the course of 2023 and 2024, there have been numerous articles comparing Nvidia stock to Cisco stock[ref^6], which fell drastically in value during the dot-com bubble burst. Many draw similarities between their price appreciations. 
+
+Taking into account their causality relationship, would the S&P 500 react to a sudden drop in value of Nvidia stocks? 
+
+To examine this scenario, we took the prices of CISCO stock from March 2000 to October 2002, which is when the market went from its highest valuation to its lowest [ref^7]. We calculated the daily growth rate of the stock price by taking the initial date as a reference. We then applied these multiples to the NVDA prices from 30 April 2024 onward. 
+
+Cumulative returns graph for CISCO stock and calculation of multiples: 
+```{r csco}
+#calculating the daily growth rate
+close_price_cum_CSCO <- CSCO_a$Close / CSCO_a$Close[1]
+
+#plotting the figure
+library(plotly)
+
+figure <- plot_ly(x = CSCO_a$Date, y = close_price_cum_CSCO, type = "scatter", mode = 'lines') %>%
+  layout(title = "2 Year Cumulative Return of CISCO Stock Prices relative to March 2000",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "Cumulative Return"))
+
+figure
+```
+
+Using the above rates, we apply them to NVDA stock: 
+
+```{r helper}
+
+x <- seq(Sys.Date() - 10, Sys.Date(), by = 1)
+weekdays(x, abbr = TRUE)
+# [1] "Wed" "Thu" "Fri" "Sat" "Sun" "Mon" "Tue" "Wed" "Thu" "Fri" "Sat"
+x[grepl("S(at|un)", weekdays(x))]
+# [1] "2014-10-11" "2014-10-12" "2014-10-18"
+
+```
+
+```{r}
+NVDA_prices <- NVDA_a$Close
+
+Add_NVDA_prices <- NVDA_a$Close[1340]*close_price_cum_CSCO
+New_NVDA_prices <- append(NVDA_prices, Add_NVDA_prices)
+close_price_cum_new_NVDA <- New_NVDA_prices / New_NVDA_prices[1]
+
+NVDA_dates <- NVDA_a$Date
+
+#Dates sequence
+Add_NVDA_dates <-seq(as.Date("2024-04-30"),as.Date("2026-11-23"),by = "day") # here we took the length of the Add_NVDA_prices, which was 644 which gives us the number of days of trading. To find the date on day 644, we used this simple online calculator which takes into account US holidays: https://www.timeanddate.com 
+
+
+# Remove Saturdays and Sundays
+Add_NVDA_dates <- Add_NVDA_dates[!grepl("S(a|o)", weekdays(Add_NVDA_dates, abbr = TRUE))]
+
+#this doesn't work use the code above
+#Remove Saturdays and Sundays.
+#Add_NVDA_dates<-Add_NVDA_dates[!weekdays(Add_NVDA_dates) %in% c("Sa","So")]  
+#Add_NVDA_dates<-Add_NVDA_dates[!weekdays(Add_NVDA_dates) %in% c("Saturday","Sunday")]  
+
+#Remove US holidays
+Add_NVDA_dates<-Add_NVDA_dates[!Add_NVDA_dates %in% c("2024-05-27","2024-06-19", "2024-07-03", "2024-07-04", "2024-09-02", "2024-11-28","2024-11-29","2024-12-24", "2024-12-25", "2025-01-01", "2025-01-20", "2024-02-17","2025-04-18", "2025-05-26", "2025-06-19", "2025-07-04", "2025-09-01", "2025-11-27", "2025-12-25","2026-01-01","2026-01-19", "2026-02-16","2026-04-03","2026-05-25","2026-06-19","2026-07-03","2026-09-07")] 
+
+New_NVDA_dates <- append(NVDA_dates, Add_NVDA_dates)
+  
+#we use these to plot the new Nvidia share prices
+
+
+library(plotly)
+
+figure <- plot_ly(x = New_NVDA_dates, y = close_price_cum_new_NVDA, type = "scatter", mode = 'lines') %>%
+  layout(title = "Simulation of NVDA Share Price Depreciation",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "Cumulative Return"))
+
+figure
+```
+
+If a similar price pattern took place from 29.04.24 with Nvidia than it did with Cisco in 2000, the stock would lose around 80% of its value from its theoretical peak. It would almost entirely cancel out its cumulative return. It would drop back to its price at the end of 2022, that is before the rebound of the tech sector in 2023 driven by Generative AI.
+
+## Would this mean something for the S&P 500? 
+
+```{r shocks}
+#We simulate "shocks" of Nvidia price changes
+library(vars)
+shock_data <- matrix(0, nrow = 644, ncol = 2) 
+shock_data[, 1] <- close_price_cum_CSCO
+simulation_result <- predict(VAR_est, n.ahead = 644, dumvar = shock_data)
+
+#Forecasts
+plot(simulation_result)
+```
+
+From the forecasts, we can see that the CI of the S&P500 is actually quite narrow, meaning there would not be a very big variation in the index value.
+
+```{r forecast:spx}
+#We extract the predicted values for S&P 500
+forecastSPX <- data.frame(simulation_result$fcst$SPX_adj)
+forecastSPX <- expm1(forecastSPX)#reverse the log transformation
+forecasted_SPX_rates <- forecastSPX$fcst
+
+#We reverse the differencing to get back to normal prices
+last_observed_value <- SPX_a$Close[1340]
+forecasted_values <- cumsum(c(last_observed_value, forecasted_SPX_rates))
+
+#New S&P 500 index values calculated
+SPX_values <- SPX_a$Close
+New_SPX_values <- append(SPX_values, forecasted_values)
+
+#We keep only 1971 of the forecasted values to be in line with Nvidia stock
+New_SPX_values <- New_SPX_values[1:1984]
+
+#We use the same dates we defined for Nvidia
+
+library(plotly)
+
+figure <- plot_ly(x = New_NVDA_dates, y = New_SPX_values, type = "scatter", mode = 'lines') %>%
+  layout(title = "Simulation of impact of Nvidia stock price drop on the S&P500",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "Cumulative Return"))
+
+figure
+
+```
+
+
+Basically, with only 3.9% of the S&P500 growth being accounted for by Nvidia in 2024 and even lower values in previous years, the effect would be negligible.
+
+Now let's try to expand on our VAR model by adding all of the "Magnificent 7":
+
+```{r overall}
+tickers <- getSymbols(c("NVDA","^GSPC","META","AMZN","TSLA","GOOG","MSFT","AAPL"), periodicity = "daily", auto.assign=TRUE, src = "yahoo")
+META <- data.frame(META)
+AMZN <- data.frame(AMZN)
+TSLA <- data.frame(TSLA)
+GOOG <- data.frame(GOOG)
+MSFT <- data.frame(MSFT)
+AAPL <- data.frame(AAPL)
+NVDA <- data.frame(NVDA)
+GSPC <- data.frame(GSPC)
+
+META <- tibble::rownames_to_column(META, var = "Date")
+AMZN <- tibble::rownames_to_column(AMZN, var = "Date")
+TSLA <- tibble::rownames_to_column(TSLA, var = "Date")
+GOOG <- tibble::rownames_to_column(GOOG, var = "Date")
+MSFT <- tibble::rownames_to_column(MSFT, var = "Date")
+AAPL <- tibble::rownames_to_column(AAPL, var = "Date")
+GSPC <- tibble::rownames_to_column(GSPC, var = "Date")
+NVDA <- tibble::rownames_to_column(NVDA, var = "Date")
+
+# change the date format and select the dates
+start_date <- as.Date("2019-01-01")
+end_date <- as.Date("2024-04-29")
+
+META$Date <- anydate(META$Date)
+META$Date <- as.Date(META$Date, format =  "%d.%m.%Y")
+AMZN$Date <- anydate(AMZN$Date)
+AMZN$Date <- as.Date(AMZN$Date, format =  "%d.%m.%Y")
+TSLA$Date <- anydate(TSLA$Date)
+TSLA$Date <- as.Date(TSLA$Date, format =  "%d.%m.%Y")
+GOOG$Date <- anydate(GOOG$Date)
+GOOG$Date <- as.Date(GOOG$Date, format =  "%d.%m.%Y")
+MSFT$Date <- anydate(MSFT$Date)
+MSFT$Date <- as.Date(MSFT$Date, format =  "%d.%m.%Y")
+AAPL$Date <- anydate(AAPL$Date)
+AAPL$Date <- as.Date(AAPL$Date, format =  "%d.%m.%Y")
+GSPC$Date <- anydate(GSPC$Date)
+GSPC$Date <- as.Date(GSPC$Date, format =  "%d.%m.%Y")
+NVDA$Date <- anydate(NVDA$Date)
+NVDA$Date <- as.Date(NVDA$Date, format =  "%d.%m.%Y")
+
+META <- META %>%
+  filter(Date >= start_date & Date <= end_date)
+AMZN <- AMZN %>%
+  filter(Date >= start_date & Date <= end_date)
+TSLA <- TSLA %>%
+  filter(Date >= start_date & Date <= end_date)
+GOOG <- GOOG %>%
+  filter(Date >= start_date & Date <= end_date)
+MSFT <- MSFT %>%
+  filter(Date >= start_date & Date <= end_date)
+AAPL <- AAPL %>%
+  filter(Date >= start_date & Date <= end_date)
+GSPC <- GSPC %>%
+  filter(Date >= start_date & Date <= end_date)
+NVDA <- NVDA %>%
+  filter(Date >= start_date & Date <= end_date)
+
+#time series
+META <-  ts(META[,c(-1,-2,-3,-4,-6,-7)], start = as.yearmon(META$Date[1]), frequency = 365)
+AMZN <-  ts(AMZN[,c(-1,-2,-3,-4,-6,-7)], start = as.yearmon(AMZN$Date[1]), frequency = 365)
+TSLA <-  ts(TSLA[,c(-1,-2,-3,-4,-6,-7)], start = as.yearmon(TSLA$Date[1]), frequency = 365)
+GOOG <-  ts(GOOG[,c(-1,-2,-3,-4,-6,-7)], start = as.yearmon(GOOG$Date[1]), frequency = 365)
+MSFT <-  ts(MSFT[,c(-1,-2,-3,-4,-6,-7)], start = as.yearmon(MSFT$Date[1]), frequency = 365)
+AAPL <-  ts(AAPL[,c(-1,-2,-3,-4,-6,-7)], start = as.yearmon(AAPL$Date[1]), frequency = 365)
+GSPC <-  ts(GSPC[,c(-1,-2,-3,-4,-6,-7)], start = as.yearmon(GSPC$Date[1]), frequency = 365)
+NVDA <-  ts(NVDA[,c(-1,-2,-3,-4,-6,-7)], start = as.yearmon(NVDA$Date[1]), frequency = 365)
+
+META_adj<- na.omit(diff(log(META)))
+AMZN_adj<- na.omit(diff(log(AMZN)))
+TSLA_adj<- na.omit(diff(log(TSLA)))
+GOOG_adj<- na.omit(diff(log(GOOG)))
+MSFT_adj<- na.omit(diff(log(MSFT)))
+AAPL_adj<- na.omit(diff(log(AAPL)))
+NVDA_adj<- na.omit(diff(log(NVDA)))
+GSPC_adj<- na.omit(diff(log(GSPC)))
+
+#All of them are stationary since all p-values are <0.05 in the dickey-fuller tests performed below
+adf.test(META_adj)
+adf.test(AMZN_adj)
+adf.test(TSLA_adj)
+adf.test(GOOG_adj)
+adf.test(MSFT_adj)
+adf.test(AAPL_adj)
+adf.test(NVDA_adj)
+adf.test(GSPC_adj)
+
+
+
+#VAR model with magnificent 7
+VAR_est.2 <- VAR(cbind(GSPC_adj, NVDA_adj,META_adj,AMZN_adj,TSLA_adj,GOOG_adj,MSFT_adj,AAPL_adj), type="const", ic="AIC")
+summary(VAR_est.2)
+
+
+```
+
+Now Amazon and Apple appear as other significant contributors to the S&P 500 index.
+The Granger Causality test also becomes more difficult to interpret, as NVIDIA does not have a significant impact on all other variables of the model: 
+
+```{r causality2}
+causality(VAR_est.2, cause="NVDA_adj")
+```
+
+## Volatility NVIDIA
+
+First (again) we will use the raw dataset to plot the evolution of the stock. 
+For each day after the first day (in our dataset 22.01.2019), we calculate the ratio of the close price to the initial price. This ratio tells us how much the price has changed relative to the initial price and give us an idea on how much an investment would have grown or declined over time if we bought the asset at that initial price.
+```{r volatility}
+close_price_cum <- NVDA_a$Close / NVDA_a$Close[1]
+
+
+figure <- plot_ly(x = NVDA_a$Date, y = close_price_cum, type = "scatter", mode = 'lines') %>%
+  layout(title = "5 Year Cumulative Return on NVIDIA Stock Prices relative to 02.01.2019",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "Cumulative Return"))
+
+figure
+```
+
+
+```{r returndayday, warning=FALSE}
+
+# calculate the returns now
+# diff calculates the difference between consecutive close prices
+# lag shifts the close price by one day to align with the difference 
+# formula used (price_today - price_yesterday)/price_yesterday
+# we are still working with stationary data here because we differentiated it already. 
+# We do however proceed with a log transformation.
+# we take the original not differenciated and not log transformed time series
+
+#we calucalte percentage returns
+NVDA_returns <-  100* diff(as.vector(NVDA))/lag(as.vector(NVDA))
+
+
+# we omit the first NA entry in the calculation for day 1
+NVDA_returns <- NVDA_returns[NVDA_returns != 0]
+NVDA_returns <- na.omit(NVDA_returns)
+
+#calculate the mean return daily
+mean(NVDA_returns)
+
+```
+
+The average daily return is 0.29. On an annual basis we have an average return of 252 (number of stock market open days) x 0.2841 = 71,6% in return.
+
+```{r vol_daily}
+
+#daily volatility, calculated simply with std deviations
+volatility_daily <- sd(NVDA_returns)
+# Calculate the monthly volatility (daily volatility * square root of 21)
+#21 working days in a month
+#252 working days in a year
+volatility_monthly <- sqrt(21) * volatility_daily
+volatility_anual <- sqrt(252) * volatility_daily
+
+#print a table of the percentage values
+df <- data.frame(Daily_Volatility = volatility_daily, Monthly_Volatility = volatility_monthly,
+                 Annual_Volatility = volatility_anual)
+
+print(df)
+
+#we try to plot the returns
+NVDA_returns_temp <- ts(NVDA_returns, start=as.yearmon(NVDA_a$Date[1]), frequency = 365)
+plot(NVDA_returns_temp)
+
+# Initialize the new data frame
+NVDA_adj_df <- data.frame(Date = NVDA_a$Date)
+# Create a Diff column filled with NA initially
+NVDA_adj_df$Diff <- NA
+# If NVDA_adj is shorter than NVDA_a$Date - 1 (to account for the first NA),
+# fill remaining values with NA
+if (length(NVDA_returns_temp) < length(NVDA_a$Date) - 1) {
+  NVDA_returns_temp_2 <- c(NVDA_returns_temp, rep(NA, length(NVDA_a$Date) - 1 - length(NVDA_adj)))
+}
+# Add the NVDA_adj values to the Diff column starting from the second row
+NVDA_adj_df$Diff[2:length(NVDA_a$Date)] <- NVDA_returns_temp_2
+
+plot(NVDA_adj_df$Date,NVDA_adj_df$Diff, type="l")
+
+library(ggplot2)
+#this ggplot represents the distribution of daily log NVDA returns -- more or less a normal distribution
+ggplot(data.frame(returns =as.vector(NVDA_returns)), aes(x = returns)) +
+  geom_histogram(binwidth = 1, fill = "skyblue", color = "black") +
+  labs(title = "Distribution of Daily NVDA Returns", x = "Returns", y = "Frequency") +
+  theme_minimal()
+
+```
+The daily volatility on relative return is 3.26 which is quite significant and high, but not surprising.
+Done the Volatility analysis now we see volatility in terms of prediction with arma or garch model.
+
+```{r acfpacf, echo=FALSE}
+
+#now we try to compute the acf and pacf
+
+acf(ts(NVDA_returns), main = "Autocorrelation of daily returns")
+pacf(ts(NVDA_returns), main = "Partial Autocorrelation of daily returns")
+
+adf.test(ts(NVDA_returns)) #NVDA returns are already stationary, so no differencing or transfomration needed
+
+auto.arima(ts(NVDA_returns))
+```
+Based on the ACF and PACF, there is no autocorrelation in our data. Considering the drop-off at lag 1, 7 and 9 for the ACF and significant PACF at lags 1, 7 and 9 there is not a clear ARMA pattern with drop off values at certain lags. However, there are probably models with lower coefficients, so we use the AIC method. Auto arima additionally suggests us (4,0,1) model.
+
+## Modelling - Predicting
+
+### Predicting returns with ARIMA
+
+GARCH models are used for modeling and forecasting volatility in financial time series data. GARCH models capture the conditional variance or volatility clustering observed in financial data, where periods of high volatility tend to be followed by periods of high volatility.
+
+In our case we have to deal with ARMA, because when calculating the returns we already differeciated the values. 
+
+
+
+```{r arma, warning=FALSE}
+d <- 0 
+max.order <- 3
+
+arima_aic <- matrix(NA, ncol = max.order + 1, nrow = max.order + 1)
+row.names(arima_aic) <- c(0:max.order)
+colnames(arima_aic) <- c(0:max.order)
+
+for (i in 0:max.order) {
+  for (j in 0:max.order) {
+    arima_aic[i + 1, j + 1] <- arima(NVDA_returns_temp, order = c(i, d, j), include.mean = TRUE)$aic
+  }
+}
+
+arima_aic
+
+```
+```{r arma2}
+# Finding the model specification which minimizes the AIC
+index <- which(arima_aic == min(arima_aic), arr.ind = TRUE)
+ar <- as.numeric(rownames(arima_aic)[index[1]])
+ma <- as.numeric(colnames(arima_aic)[index[2]])
+```
+
+Interpretation: The Akaike information criterion (AIC) is minimized for the ARIMA(1,0,0), hence for an ARIMA including one autoregression and zero moving average terms.
+This means that the current calue of the time series depedns on its own previous value (lag 1) and the non existend MA term means that no moving average is affecting the model.
+
+
+```{r, boxcoxqq}
+NVDA_returns_a <- BoxCox(NVDA_returns_temp, lambda = "auto") #We do a box-cox transformation to insure the residuals are normally distributed
+# Number of period we want to forecast
+library(lmtest)
+# Estimating the optimal ARIMA-model and testing for significance of the coefficients
+arima <- arima(NVDA_returns_a, order=c(ar,d,ma), include.mean = TRUE) 
+coeftest(arima)
+
+#Checking ACF, PACF and normality of residuals.
+checkresiduals(arima) 
+pacf(arima$residuals)
+qqnorm(arima$residuals)
+qqline(arima$residuals,lwd=2)
+
+```
+```{r ljungbox}
+Box.test(arima$residuals, type = "Ljung-Box")
+
+#save the residuals of the model
+e <- residuals(arima)
+ggtsdisplay(e)
+```
+
+
+We BoxCox transform the residuals to ensure the normal distribution of the residuals. This will ensure that the models are accurate and no autocorrealtion among residuals present. Ljung box test suggests that there is no significant autocorrelation in the residuals of the ARIMA model, indicating that the model adequately captures the temporal dependence in the data, judging on the p value.
+This result is also visible in the ACF and PACF.
+Both the "ar1", "ar1 and "ma1 coefficients and the "intercept" coefficient are highly statistically significant, as indicated by their very low p-values. The Ljung-Box test indicates that there is no autocorrelation in the residuals.
+This also indicates that the ARIMA(2,0,1) model adequately capture all the temporal dependencies present in the data.
+```{r forecast}
+library(forecast)
+
+# Forecasting
+pred <- forecast(arima,h=100)
+pred_values <- fitted(pred)
+
+# Plot the forecast along with the fitted values
+autoplot(pred) + autolayer(pred_values)
+
+```
+
+The red line is the log NVIDIA returns fitted values. The light blue area represents the 95% prediction interval for the next 100 days. Thus, with a 95% probability, that NVDA's daily returns will be in this range at a given time.
+
+### Predicting volatility with GARCH
+
+In our model, volatility is a measure of the riskiness of the stock returns. We compare the so-called rolling volatility and garch modeled volatility. In our model we calucate the 22-day rolling volatiltiy of the returns. The formula takes the 22-day window, computes the mean of the returns and then the variance is calculated. At the end the final standard deviation (a sigma formula) (volatility) is calucated. This is the theoretical explanation. The formula is simpler.
+
+```{r garch1}
+library(fGarch)
+#transfor  the returns again to ts 
+NVDA_returns <- ts(NVDA_returns, start=as.yearmon(NVDA_a$Date[1]), frequency = 365)
+# Define the GARCH(4,4) model with GED distribution
+#spec <- garchSpec(mean.model = list(armaOrder = c(1, 0)), 
+                  # variance.model = list(model = "sGARCH", garchOrder = c(2, 2)), distribution.model = "ged")
+
+# Fit the model use ged to allow more flexilibty
+garch_fit <- garchFit(data = NVDA_returns, cond.dist = "ged")
+garch_vol <- volatility(garch_fit, type="sigma")
+
+
+# Rolling volatility calculation
+# 22 corresponding to approximately one trading month.. so is more or less monthly summarized.
+rolling_vol <- rollapply(data = NVDA_returns, width = 22, FUN = sd, align = "right", fill = NA, na.rm = TRUE)
+
+# Plotting GARCH volatility against rolling volatility with dates on x-axis
+plot(index(NVDA_returns), garch_fit@sigma.t, type = "l", col = "blue", ylim = c(0, max(rolling_vol, na.rm = TRUE)), 
+     xlab = "Date", ylab = "Volatility", main = "GARCH vs. Rolling Volatility of Daily Returns TRAIN", xaxr="n")
+lines(index(NVDA_returns), rolling_vol, col = "red")
+legend("topright", legend = c("GARCH Volatility", "Rolling Volatility"), col = c("blue", "red"), lty = 1)
+```
+This graph shos us that the rolling volatility is good replcated by garch(1,1).
+```{r garch2}
+#forecast now
+garch_forecast <- predict(garch_fit, n.ahead = 100, plot=TRUE)
+summary(garch_fit)
+summary(garch_forecast)
+
+```
+We run the fGarch function which fits a GARCH model given the series. In our case it fit a garch (1,1) model on the log and box cox transformed NVIDIA returns. We also used a generalized error distribution to enable more flexibility to the model (ged instead of std). All coefficients in the test are significant. Judging on the log likelihood we have a good fit. Only concern at this point is the result of the Jarque_Bera test which indicats no normality in the residuals and has to be further examined. The residual tests also look good, where the Ljung-Box once again proves the absence of autocorrelation in the model. All in all, this Garch (1,1) appears to be a good fit in our case in catching the conditional variance. 
+
+## What would the volatility look like with a dot-com crisis event? 
+As can be seen below, the daily, monthly and annual volatility have increased. 
+```{r dotcomnowvol}
+
+#calculate the returns with new fluctuations 
+NVDA_returns_new <-  100* diff(log(as.vector(New_NVDA_prices)))/lag(log(as.vector(New_NVDA_prices))) 
+NVDA_returns_new <- NVDA_returns_new [NVDA_returns_new  != 0]
+NVDA_returns_new <- na.omit(NVDA_returns_new )
+tail(NVDA_returns_new ,20)
+
+#daily volatility 
+volatility_daily_n <- sd(NVDA_returns_new)
+# Calculate the monthly volatility (daily volatility * square root of 21)
+#21 working days in a month
+#252 working days in a year
+volatility_monthly_n <- sqrt(21) * volatility_daily_n
+volatility_anual_n <- sqrt(252) * volatility_daily_n
+
+
+#print a table of the percentage values 
+df <- data.frame(Daily_Volatility_Percentage = volatility_daily_n, Monthly_Volatility_Percentage = volatility_monthly_n,
+                 Annual_Volatility_Percentage = volatility_anual_n)
+
+print(df)
+
+#no strong autocorrelation in the ACF and PACF
+acf(NVDA_returns_new, main = "Autocorrelation of daily returns")
+pacf(NVDA_returns_new, main = "Partial Autocorrelation of daily returns")
+
+#calculating in the ARIMA 
+d <- 0
+max.order <- 3
+
+arima_aic <- matrix(NA, ncol = max.order + 1, nrow = max.order + 1)
+row.names(arima_aic) <- c(0:max.order)
+colnames(arima_aic) <- c(0:max.order)
+
+for (i in 0:max.order) {
+  for (j in 0:max.order) {
+    arima_aic[i + 1, j + 1] <- arima(NVDA_returns_new, order = c(i, d, j), include.mean = TRUE)$aic
+  }
+}
+
+arima_aic
+
+index <- which(arima_aic == min(arima_aic), arr.ind = TRUE)
+ar <- as.numeric(rownames(arima_aic)[index[1]])
+ma <- as.numeric(colnames(arima_aic)[index[2]])
+
+NVDA_returns_b <- BoxCox(NVDA_returns_new, lambda = "auto") #We do a box-cox transformation to insure the residuals are normally distributed
+
+library(lmtest)
+# Estimating the optimal ARIMA-model and testing for significance of the coefficients
+arima.2 <- arima(NVDA_returns_b, order=c(ar,d,ma), include.mean = TRUE) 
+coeftest(arima.2)
+
+#Checking ACF, PACF and normality of residuals.
+checkresiduals(arima.2) 
+pacf(arima.2$residuals)
+qqnorm(arima.2$residuals)
+qqline(arima.2$residuals,lwd=2)
+
+# Forecasting
+pred.2 <- forecast(arima.2,level=0.95,h=50)
+plot(pred.2, ylab="NVDA")
+```
+
+
+## Value at Risk 
+
+We calculate the Value at risk to see the level of risk the investors are undertaking when investing in such a volatile stock.
+
+```{r var1}
+
+# parameterizing value at risk
+inv_volume <-  1000 #how much we invest
+hp <- 1 #holding period of 1 year
+alpha <- .05
+
+returns_sorted <- sort(as.numeric(NVDA_returns), decreasing=FALSE)
+position_quantil <- floor(length(returns_sorted)*alpha)
+alpha_quantil <- returns_sorted[position_quantil]
+hvar <- alpha_quantil*inv_volume
+
+ecdf <- 1:length(returns_sorted)/length(returns_sorted)
+
+plot(x=returns_sorted, y=ecdf, xlab="NVDA Returns", ylab="ECDF", main = " ECDF of NVDA returns")+
+     grid()+
+     abline(v=alpha_quantil,col="red")
+     
+     
+#calculate the parametric value at risk
+     
+vola <- sd(NVDA_returns)
+mean <- mean(NVDA_returns)
+parvar <- (mean*hp-qnorm(1-alpha)*vola*sqrt(hp))*inv_volume
+# Plot the histogram
+hist(NVDA_returns * inv_volume, breaks = 50, xlab = "Profit/Loss per Month")
+
+# Add vertical lines for VaR values
+abline(v = hvar, col = "red")
+abline(v = parvar, col = "blue")
+
+# Add legend
+legend("topleft", legend = c("Historical VaR", "Parametric VaR"), col = c("red", "blue"), lty = 1)
+
+abs(hvar)-abs(parvar)
+
+```
+We see that that in 95% of cases, the monthly return was not lower than -100%.Looking at the histogram next, we see that there is a 5% chance that the losses exceed 1500 USD (our initial investment is 1000 USD).It seems that Nvidia is already a very risky stock at the present time. 
+
+
+## Value at Risk if there would be an event similar to the dot-com crisis.  
+
+We calculate the Value at risk to see the level of risk the investors are undertaking when investing in an even more volatile environment than usual (the price drop scenario as for CISCO). 
+
+```{r var22}
+
+#calculate the returns with new fluctuations 
+NVDA_returns_new <-  100* diff(log(as.vector(New_NVDA_prices)))/lag(log(as.vector(New_NVDA_prices))) 
+NVDA_returns_new <- NVDA_returns_new [NVDA_returns_new  != 0]
+NVDA_returns_new <- na.omit(NVDA_returns_new )
+tail(NVDA_returns_new ,20)
+
+# parameterizing value at risk
+inv_volume <-  1000 #how much we invest
+hp <-1 #holding period of 1 year
+alpha <- .05
+
+returns_sorted <- sort(as.numeric(NVDA_returns_new ), decreasing=FALSE)
+position_quantil <- floor(length(returns_sorted)*alpha)
+alpha_quantil <- returns_sorted[position_quantil]
+hvar <- alpha_quantil*inv_volume
+
+ecdf <- 1:length(returns_sorted)/length(returns_sorted)
+plot(x=returns_sorted, y=ecdf, xlab="NVDA Returns", ylab="ECDF", main = " ECDF of NVDA returns")+
+     grid()+
+     abline(v=alpha_quantil,col="red")
+     
+     
+#calculate the parametric value at risk
+     
+vola <- sd(NVDA_returns_new)
+mean <- mean(NVDA_returns_new)
+parvar <- (mean*hp-qnorm(1-alpha)*vola*sqrt(hp))*inv_volume
+# Plot the histogram
+hist(NVDA_returns_new * inv_volume, breaks = 50, xlab = "Profit/Loss per Month")
+
+# Add vertical lines for VaR values
+abline(v = hvar, col = "red")
+abline(v = parvar, col = "blue")
+
+# Add legend
+legend("topleft", legend = c("Historical VaR", "Parametric VaR"), col = c("red", "blue"), lty = 1)
+
+abs(hvar)-abs(parvar)
+```
+We see that that in 95% of cases, the monthly return was not lower than around -130%. Looking at the histogram, we see that there is perhaps a 5% chance that the losses exceed around 1800 USD of losses (for an initial investment of 1000 USD). The risk of holding that stock has definitely increased in the situation of a bubble bursting. 
+
+```{r var3}
+
+#New prices calculation 
+close_price_cum_CSCO <- CSCO_a$Close / CSCO_a$Close[1]
+NVDA_prices <- NVDA_a$Close
+Add_NVDA_prices <- NVDA_a$Close[1327]*close_price_cum_CSCO
+New_NVDA_prices <- append(NVDA_prices, Add_NVDA_prices)
+close_price_cum_new_NVDA <- New_NVDA_prices / New_NVDA_prices[1]
+
+#New dates vector 
+NVDA_dates <- NVDA_a$Date
+
+#Dates sequence
+Add_NVDA_dates <-seq(as.Date("2024-04-30"),as.Date("2026-11-23"),by = 1) # here we took the length of the Add_NVDA_prices, which was 644 which gives us the number of days of trading. To find the date on day 644, we used this simple online calculator which takes into account US holidays: https://www.timeanddate.com 
+
+#Remove Saturdays and Sundays.
+Add_NVDA_dates<-Add_NVDA_dates[!weekdays(Add_NVDA_dates) %in% c("Saturday","Sunday")]  
+
+#Remove US holidays
+Add_NVDA_dates<-Add_NVDA_dates[!Add_NVDA_dates %in% c("2024-05-27","2024-06-19", "2024-07-03", "2024-07-04", "2024-09-02", "2024-11-28","2024-11-29","2024-12-24", "2024-12-25", "2025-01-01", "2025-01-20", "2024-02-17","2025-04-18", "2025-05-26", "2025-06-19", "2025-07-04", "2025-09-01", "2025-11-27", "2025-12-25","2026-01-01","2026-01-19", "2026-02-16","2026-04-03","2026-05-25","2026-06-19","2026-07-03","2026-09-07")] 
+
+New_NVDA_dates <- append(NVDA_dates, Add_NVDA_dates)
+
+```
+
+
+## Appendix: Curiosity GARCH
+
+We tried to find which would be the best fit for the volatility according to Garch. This aprt can be treated as appendix.
+```{r}
+library(rugarch)
+
+# Ensure your data is a time series object
+NVDA_returns <- ts(NVDA_returns, start = c(2019, 1), frequency = 365)
+
+# Define a function to fit and evaluate GARCH models
+fit_garch_model <- function(order_p, order_q) {
+  spec <- ugarchspec(
+    variance.model = list(model = "sGARCH", garchOrder = c(order_p, order_q)),
+    mean.model = list(armaOrder = c(1, 1)),  # Adjust ARMA order as needed
+    distribution.model = "std"  # Use Student-t distribution
+  )
+  
+  fit <- ugarchfit(spec, data = NVDA_returns)
+  
+  # Extract AIC and BIC
+  aic <- infocriteria(fit)["Akaike",]
+  bic <- infocriteria(fit)["Bayes",]
+  
+  return(list(fit = fit, aic = aic, bic = bic))
+}
+
+# Fit multiple GARCH models and compare AIC/BIC
+results <- list()
+for (p in 1:3) {
+  for (q in 1:3) {
+    result <- fit_garch_model(p, q)
+    results[[paste("GARCH(", p, ",", q, ")", sep = "")]] <- result
+  }
+}
+
+# Find the best model based on AIC/BIC
+best_model <- NULL
+best_aic <- Inf
+best_bic <- Inf
+for (model in names(results)) {
+  if (results[[model]]$aic < best_aic) {
+    best_aic <- results[[model]]$aic
+    best_model <- model
+  }
+  if (results[[model]]$bic < best_bic) {
+    best_bic <- results[[model]]$bic
+    best_model <- model
+  }
+}
+
+print(paste("Best model based on AIC: ", best_model))
+print(paste("Best model based on BIC: ", best_model))
+
+# Inspect the best model's fit
+best_fit <- results[[best_model]]$fit
+summary(best_fit)
+
+# Diagnostic checking
+# Check standardized residuals for autocorrelation
+acf(residuals(best_fit, standardize = TRUE), main = "ACF of Standardized Residuals")
+
+```
